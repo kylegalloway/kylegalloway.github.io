@@ -1,0 +1,36 @@
+title: Kyle Galloway
+description: A tiny, fast, low-bandwidth blog.
+url: "https://kylegalloway.github.io"
+baseurl: ""
+
+markdown: kramdown
+excerpt_separator: "<!--more-->"
+
+plugins:
+  - jekyll-paginate
+  - jekyll-seo-tag
+  - jekyll-sitemap
+  - jekyll-feed
+
+paginate: 10
+paginate_path: "/blog/page:num/"
+
+show_drafts: false
+
+defaults:
+  - scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: "post"
+      permalink: "/blog/:year/:month/:day/:title/"
+
+exclude:
+  - scripts/
+  - docs/
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - Taskfile.yml
+  - MIGRATION_PLAN.md
+  - CLAUDE.md
