@@ -1,0 +1,27 @@
+version: '3'
+
+tasks:
+  install:
+    desc: Install Ruby gem dependencies (Jekyll + plugins)
+    cmds:
+      - bundle install
+
+  serve:
+    desc: Serve the site locally with live drafts at http://localhost:4000
+    cmds:
+      - bundle exec jekyll serve --drafts
+
+  build:
+    desc: Build the site into _site/ (with drafts) without serving it
+    cmds:
+      - bundle exec jekyll build --drafts
+
+  tag:
+    desc: 'Suggest tags for a draft. Usage: task tag -- _drafts/my-post.md'
+    cmds:
+      - python3 scripts/suggest_tags.py {{.CLI_ARGS}}
+
+  clean:
+    desc: Remove build output and caches
+    cmds:
+      - rm -rf _site .jekyll-cache .jekyll-metadata
