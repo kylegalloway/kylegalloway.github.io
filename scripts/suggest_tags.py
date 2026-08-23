@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
-"""Lexical tag classifier for blog drafts.
+"""Lexical tag classifier for blog drafts and posts.
 
-Scores a draft's text against the word-frequency profile of every existing
+Scores a post's text against the word-frequency profile of every existing
 tag (built from posts already carrying that tag). Suggests the best-matching
 existing tags, proposes a brand-new top-level tag when nothing fits well,
 and separately flags parent tags that have grown large enough to be worth
-splitting into a child tag. Writes the chosen tags into the draft's front
+splitting into a child tag. Writes the chosen tags into the post's front
 matter and regenerates _data/tags.yml.
 
-Usage: python3 scripts/suggest_tags.py _drafts/my-post.md
-       python3 scripts/suggest_tags.py _drafts/my-post.md --new-tag-threshold 0.08 --split-threshold 5
+Single-file mode: score and (optionally) retag one draft.
+Bulk mode (--all): walk every post in _posts/ (and _drafts/ with
+--include-drafts) one at a time, prompting for each — useful after adding a
+new child tag in _data/tag_hierarchy.yml, to see which older posts might
+deserve it too. Each already-tagged post is scored with its own words
+excluded from its current tags' profiles first (leave-one-out), so it isn't
+just trivially matching itself.
+
+Usage:
+  python3 scripts/suggest_tags.py _drafts/my-post.md
+  python3 scripts/suggest_tags.py _drafts/my-post.md --new-tag-threshold 0.08 --split-threshold 5
+  python3 scripts/suggest_tags.py --all
+  python3 scripts/suggest_tags.py --all --include-drafts --dry-run
 """
 import argparse
 import math
@@ -86,7 +97,30 @@ def build_tag_profiles(posts, hierarchy):
     for tag in hierarchy:
         profiles.setdefault(tag, Counter())
         counts.setdefault(tag, 0)
+    for children in (info.get("children", []) or [] for info in hierarchy.values()):
+        for child in children:
+            profiles.setdefault(child, Counter())
+            counts.setdefault(child, 0)
     return profiles, counts
+
+
+def profiles_excluding(profiles, post):
+    """Copy of profiles with `post`'s own words subtracted from any tag it
+    already carries, so scoring an already-tagged post doesn't just measure
+    how well it matches itself."""
+    adjusted = {}
+    for tag, profile in profiles.items():
+        if tag in post["tags"]:
+            trimmed = profile.copy()
+            for word, count in post["words"].items():
+                if word in trimmed:
+                    trimmed[word] -= count
+                    if trimmed[word] <= 0:
+                        del trimmed[word]
+            adjusted[tag] = trimmed
+        else:
+            adjusted[tag] = profile
+    return adjusted
 
 
 def cosine_similarity(a: Counter, b: Counter) -> float:
@@ -117,45 +151,33 @@ def distinctive_words(words: Counter, background: Counter, limit=6):
     return [w for _, w in scored[:limit]]
 
 
-def parent_of(hierarchy, tag):
-    for parent, info in hierarchy.items():
-        if tag in ((info or {}).get("children", []) or []):
-            return parent
-    return None
+def print_split_candidates(hierarchy, counts, posts, threshold):
+    for tag, total in counts.items():
+        combined = total + sum(
+            counts.get(c, 0) for c in (hierarchy.get(tag, {}) or {}).get("children", []) or []
+        )
+        if combined >= threshold and not (hierarchy.get(tag, {}) or {}).get("children"):
+            tag_posts = [p for p in posts if tag in p["tags"]]
+            merged = Counter()
+            for p in tag_posts:
+                merged.update(p["words"])
+            words = distinctive_words(merged, Counter(), limit=8)
+            print(f"Candidate for splitting '{tag}' ({combined} posts) — "
+                  f"frequent words: {', '.join(words)}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("draft", type=Path)
-    parser.add_argument("--new-tag-threshold", type=float, default=0.08,
-                         help="below this best-match cosine similarity, propose a new top-level tag")
-    parser.add_argument("--split-threshold", type=int, default=5,
-                         help="post count (parent + children) at which a split candidate is flagged")
-    args = parser.parse_args()
-
-    if not args.draft.exists():
-        sys.exit(f"no such file: {args.draft}")
-
-    hierarchy = yaml.safe_load(TAG_HIERARCHY_PATH.read_text()) or {}
-    posts = load_all_posts()
-    profiles, counts = build_tag_profiles(posts, hierarchy)
-    children_set = child_tags_of(hierarchy)
-
-    draft_front_matter, draft_body = load_post(args.draft)
-    draft_words = tokenize(draft_front_matter.get("title", ""), draft_body)
-
+def score_post(path, front_matter, words, profiles, hierarchy, children_set, new_tag_threshold):
+    """Return (top_level_scores, child_scores, new_tag_candidate)."""
     scored = sorted(
-        ((tag, cosine_similarity(draft_words, profile)) for tag, profile in profiles.items()),
+        ((tag, cosine_similarity(words, profile)) for tag, profile in profiles.items()),
         key=lambda t: t[1], reverse=True,
     )
-
-    print(f"Scoring '{args.draft.name}' against {len(profiles)} known tag(s):\n")
-
     top_level_scores = [(t, s) for t, s in scored if t not in children_set]
     child_scores = {t: s for t, s in scored if t in children_set}
 
+    print(f"Scoring '{path.name}' against {len(profiles)} known tag(s):\n")
     for tag, score in top_level_scores[:8]:
-        marker = " *" if score >= args.new_tag_threshold else ""
+        marker = " *" if score >= new_tag_threshold else ""
         print(f"  {tag:<20} {score:.3f}{marker}")
         for child in (hierarchy.get(tag, {}) or {}).get("children", []) or []:
             if child in child_scores:
@@ -163,47 +185,47 @@ def main():
 
     best_score = top_level_scores[0][1] if top_level_scores else 0.0
     new_tag_candidate = None
-    if best_score < args.new_tag_threshold:
+    if best_score < new_tag_threshold:
         background = Counter()
         for profile in profiles.values():
             background.update(profile)
-        candidate_words = distinctive_words(draft_words, background)
+        candidate_words = distinctive_words(words, background)
         new_tag_candidate = "-".join(candidate_words[:2]) if candidate_words else None
         if new_tag_candidate:
             print(f"\nNo strong match against existing tags (best={best_score:.3f}).")
             print(f"Candidate new top-level tag: '{new_tag_candidate}' "
                   f"(distinctive words: {', '.join(candidate_words)})")
 
-    print()
-    for tag, score in top_level_scores:
-        total = counts.get(tag, 0) + sum(
-            counts.get(c, 0) for c in (hierarchy.get(tag, {}) or {}).get("children", []) or []
-        )
-        if total >= args.split_threshold and not (hierarchy.get(tag, {}) or {}).get("children"):
-            tag_posts = [p for p in posts if tag in p["tags"]]
-            merged = Counter()
-            for p in tag_posts:
-                merged.update(p["words"])
-            words = distinctive_words(merged, Counter(), limit=8)
-            print(f"Candidate for splitting '{tag}' ({total} posts) — "
-                  f"frequent words: {', '.join(words)}")
+    return top_level_scores, child_scores, new_tag_candidate
 
+
+def prompt_and_apply(path, front_matter, body, current_tags, new_tag_candidate, dry_run):
     print()
     prompt = "Enter comma-separated tags to apply"
-    if new_tag_candidate:
+    if current_tags:
+        prompt += f" (blank = keep current: {', '.join(current_tags)})"
+    elif new_tag_candidate:
         prompt += f" (candidate new tag: {new_tag_candidate})"
+
+    if dry_run:
+        print(f"[dry run] {prompt}: (skipped, not prompting)")
+        return None
+
     chosen_raw = input(f"{prompt}: ").strip()
     chosen = [t.strip() for t in chosen_raw.split(",") if t.strip()]
 
     if not chosen:
-        print("No tags entered, leaving draft unchanged.")
-        return
+        print("No tags entered, leaving unchanged.")
+        return None
 
-    draft_front_matter["tags"] = chosen
-    new_text = "---\n" + yaml.safe_dump(draft_front_matter, sort_keys=False).strip() + "\n---\n" + draft_body
-    args.draft.write_text(new_text)
-    print(f"Wrote tags to {args.draft}: {chosen}")
+    front_matter["tags"] = chosen
+    new_text = "---\n" + yaml.safe_dump(front_matter, sort_keys=False).strip() + "\n---\n" + body
+    path.write_text(new_text)
+    print(f"Wrote tags to {path}: {chosen}")
+    return chosen
 
+
+def update_hierarchy_and_tags_yml(hierarchy, children_set, chosen):
     for tag in chosen:
         if tag not in hierarchy and tag not in children_set:
             hierarchy[tag] = {"children": []}
@@ -219,6 +241,93 @@ def main():
         yaml.safe_dump(dict(sorted(final_counts.items())), sort_keys=False)
     )
     print(f"Regenerated {TAGS_YML_PATH.name}")
+
+
+def run_single(args, hierarchy, posts, profiles, counts, children_set):
+    if not args.draft.exists():
+        sys.exit(f"no such file: {args.draft}")
+
+    front_matter, body = load_post(args.draft)
+    words = tokenize(front_matter.get("title", ""), body)
+
+    top_level_scores, child_scores, new_tag_candidate = score_post(
+        args.draft, front_matter, words, profiles, hierarchy, children_set, args.new_tag_threshold
+    )
+    print()
+    print_split_candidates(hierarchy, counts, posts, args.split_threshold)
+
+    chosen = prompt_and_apply(
+        args.draft, front_matter, body, front_matter.get("tags", []) or [],
+        new_tag_candidate, args.dry_run,
+    )
+    if chosen:
+        update_hierarchy_and_tags_yml(hierarchy, children_set, chosen)
+
+
+def run_bulk(args, hierarchy, posts, profiles, counts, children_set):
+    targets = posts if args.include_drafts else [p for p in posts if "_posts" in p["path"].parts]
+    if not targets:
+        print("No posts to retag.")
+        return
+
+    print(f"Retagging {len(targets)} post(s){' (dry run)' if args.dry_run else ''}.\n")
+    print_split_candidates(hierarchy, counts, posts, args.split_threshold)
+    print()
+
+    for i, post in enumerate(targets, 1):
+        print(f"--- [{i}/{len(targets)}] {post['path'].relative_to(REPO_ROOT)} ---")
+        front_matter, body = load_post(post["path"])
+        adjusted_profiles = profiles_excluding(profiles, post)
+
+        _, _, new_tag_candidate = score_post(
+            post["path"], front_matter, post["words"], adjusted_profiles,
+            hierarchy, children_set, args.new_tag_threshold,
+        )
+        chosen = prompt_and_apply(
+            post["path"], front_matter, body, post["tags"], new_tag_candidate, args.dry_run,
+        )
+        if chosen:
+            # Reflect the change immediately so later posts in this same run
+            # score against the update (e.g. a freshly-added tag).
+            post["tags"] = chosen
+            profiles = build_tag_profiles(posts, hierarchy)[0]
+            update_hierarchy_and_tags_yml(hierarchy, children_set, chosen)
+            children_set = child_tags_of(hierarchy)
+        print()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("draft", type=Path, nargs="?",
+                         help="a single draft/post to score and retag")
+    parser.add_argument("--all", action="store_true",
+                         help="retag every post in _posts/, one at a time, instead of a single file")
+    parser.add_argument("--include-drafts", action="store_true",
+                         help="with --all, also walk _drafts/")
+    parser.add_argument("--dry-run", action="store_true",
+                         help="print suggestions only, don't prompt or write anything")
+    parser.add_argument("--new-tag-threshold", type=float, default=0.08,
+                         help="below this best-match cosine similarity, propose a new top-level tag")
+    parser.add_argument("--split-threshold", type=int, default=5,
+                         help="post count (parent + children) at which a split candidate is flagged")
+    args = parser.parse_args()
+
+    if args.all and args.draft:
+        sys.exit("pass either a single draft path or --all, not both")
+    if not args.all and not args.draft:
+        sys.exit("pass a draft path, or --all to retag every post")
+
+    hierarchy = yaml.safe_load(TAG_HIERARCHY_PATH.read_text()) or {}
+    posts = load_all_posts()
+    profiles, counts = build_tag_profiles(posts, hierarchy)
+    children_set = child_tags_of(hierarchy)
+
+    if args.all:
+        run_bulk(args, hierarchy, posts, profiles, counts, children_set)
+    else:
+        run_single(args, hierarchy, posts, profiles, counts, children_set)
 
 
 if __name__ == "__main__":

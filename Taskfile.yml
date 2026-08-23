@@ -21,6 +21,11 @@ tasks:
     cmds:
       - python3 scripts/suggest_tags.py {{.CLI_ARGS}}
 
+  retag:
+    desc: 'Walk every post and re-suggest tags, one at a time. Usage: task retag -- [--include-drafts] [--dry-run]'
+    cmds:
+      - python3 scripts/suggest_tags.py --all {{.CLI_ARGS}}
+
   clean:
     desc: Remove build output and caches
     cmds:

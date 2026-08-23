@@ -69,6 +69,7 @@ just so they don't need to be remembered/retyped.
 | `task serve` | `bundle exec jekyll serve --drafts` |
 | `task build` | `bundle exec jekyll build --drafts` |
 | `task tag -- _drafts/my-post.md` | runs the tag classifier on a draft (see [Tagging](#tagging)) |
+| `task retag -- [--include-drafts] [--dry-run]` | walks every post, re-suggesting tags one at a time (see [Retagging the whole blog](#retagging-the-whole-blog)) |
 | `task clean` | removes `_site/`, `.jekyll-cache/`, `.jekyll-metadata` |
 
 Things worth checking after any layout/config change, before pushing:
@@ -157,7 +158,7 @@ How it works:
 ### Running the tag classifier
 
 ```
-python3 scripts/suggest_tags.py _drafts/my-post.md
+task tag -- _drafts/my-post.md
 ```
 It's a small lexical classifier — no external services, nothing leaves your
 machine. For every existing tag it builds a word-frequency profile from the
@@ -177,7 +178,7 @@ into the draft's front matter, and regenerates `_data/tags.yml` (a flat
 
 Useful flags:
 ```
-python3 scripts/suggest_tags.py _drafts/my-post.md --new-tag-threshold 0.08 --split-threshold 5
+task tag -- _drafts/my-post.md --new-tag-threshold 0.08 --split-threshold 5
 ```
 - `--new-tag-threshold` — lower it to make the classifier more willing to
   reuse an existing tag instead of proposing a new one; raise it to make
@@ -196,6 +197,33 @@ Nothing else needs to change — old posts keep working under `programming`
 alone; only new (or manually revisited) posts need to start adding
 `golang` too. The classifier picks up the new hierarchy automatically on
 its next run, since it re-reads the file each time.
+
+### Retagging the whole blog
+
+`task tag` only ever looks at one file. To sweep every post — most useful
+right after adding a new child tag, to find older posts under the parent
+that should probably pick it up too — use:
+
+```
+task retag -- [--include-drafts] [--dry-run]
+```
+
+This walks `_posts/` (add `--include-drafts` to also cover `_drafts/`) one
+post at a time, printing the same scoring output as the single-file mode
+and prompting for each: press enter to leave a post's tags as they are, or
+type a new comma-separated list to replace them. `--dry-run` prints every
+post's suggestions without prompting or writing anything — good for a
+quick read-only pass before committing to changes post by post.
+
+Two things behave differently from single-file mode, both intentional:
+- Each already-tagged post is scored with **its own words excluded** from
+  the profiles of tags it already carries (leave-one-out) — otherwise
+  every post would just trivially match itself at a near-perfect score.
+- A brand-new child tag with **zero** posts under it yet has no vocabulary
+  to score against, so it'll show up at `0.000` for everyone until you
+  manually apply it to at least one clearly-on-topic post — after that,
+  its profile exists and later posts in the same (or a future) `retag`
+  run can start matching against it for real.
 
 ## Directory structure
 
