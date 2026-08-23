@@ -1,0 +1,19 @@
+# Agent skill configuration (local to this machine)
+docs/agents/
+
+# AI/LLM assistant artifacts (local-only, never pushed)
+CLAUDE.md
+AGENTS.md
+MIGRATION_PLAN.md
+.claude/
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*
+
+# Jekyll
+_site/
+.jekyll-cache/
+.jekyll-metadata
+.bundle/
+vendor/
