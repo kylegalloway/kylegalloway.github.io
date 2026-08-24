@@ -3,9 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% if page.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
-{% if page.description %}<meta name="description" content="{{ page.description }}">
-{% elsif site.description %}<meta name="description" content="{{ site.description }}">{% endif %}
+<meta name="robots" content="noindex, nofollow, noarchive, noimageindex">
+{% seo %}
 <style>
   :root{--fg:#1a1a1a;--muted:#666;--bg:#fff;--accent:#0b5fff;--rule:#e2e2e2}
   *{box-sizing:border-box}
