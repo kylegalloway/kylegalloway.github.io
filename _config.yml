@@ -9,8 +9,15 @@ excerpt_separator: "<!--more-->"
 plugins:
   - jekyll-paginate
   - jekyll-seo-tag
-  - jekyll-sitemap
   - jekyll-feed
+
+# Site is intentionally not meant to be indexed/discovered. No
+# jekyll-sitemap (a sitemap.xml is a ready-made list of every URL for
+# crawlers) -- robots.txt disallows everything and _headers sets
+# X-Robots-Tag for good measure. _headers needs an explicit include
+# below since Jekyll excludes underscore-prefixed files by default.
+include:
+  - _headers
 
 paginate: 10
 paginate_path: "/blog/page:num/"

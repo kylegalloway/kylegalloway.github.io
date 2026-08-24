@@ -35,8 +35,8 @@ old Jekyll/Liquid that calls `String#tainted?`, which was removed in Ruby
 3.2+ — it simply cannot run on any current Ruby. GitHub Pages' live build
 uses its own pinned toolchain server-side regardless of what's in this
 repo's `Gemfile`, so local dev instead depends directly on `jekyll` plus the
-specific plugins (`jekyll-paginate`, `jekyll-seo-tag`, `jekyll-sitemap`,
-`jekyll-feed`) — all on GitHub Pages' supported-plugins list, so the live
+specific plugins (`jekyll-paginate`, `jekyll-seo-tag`, `jekyll-feed`) — all
+on GitHub Pages' supported-plugins list, so the live
 build stays compatible even though local dev runs a newer Jekyll.
 
 ## Local preview
@@ -76,8 +76,11 @@ Things worth checking after any layout/config change, before pushing:
 - `/` still serves the landing page untouched, with a working link to `/blog/`
 - `/blog/` lists posts with excerpt, tags, and a "Read more" link
 - `/blog/tags/` renders and its anchors work
-- `view-source` on both `/` and `/blog/` — no `<script>` tags, CSS stays inlined
-- `_site/feed.xml` and `_site/sitemap.xml` exist
+- `view-source` on both `/` and `/blog/` — no executable JS, CSS stays inlined
+  (jekyll-seo-tag's `{% seo %}` does emit one inert
+  `<script type="application/ld+json">` block for structured data — that's
+  metadata, not behavior, so it doesn't count against the zero-JS goal)
+- `_site/feed.xml`, `_site/robots.txt`, and `_site/_headers` exist
 
 ## Writing and publishing a post
 
@@ -224,6 +227,31 @@ Two things behave differently from single-file mode, both intentional:
   manually apply it to at least one clearly-on-topic post — after that,
   its profile exists and later posts in the same (or a future) `retag`
   run can start matching against it for real.
+
+## Not meant to be indexed or discovered
+
+This site is deliberately opting out of search/AI-crawler discovery:
+- `robots.txt` — `Disallow: /` for all user agents
+- `<meta name="robots" content="noindex, nofollow, noarchive, noimageindex">`
+  on every page (root landing page and every blog layout)
+- `_headers` sets `X-Robots-Tag: noindex, nofollow, noarchive, noimageindex`
+  on every path — a Cloudflare Pages feature (custom response headers via a
+  `_headers` file in the build output); GitHub Pages ignores it, since it
+  has no equivalent
+- No `jekyll-sitemap` — a sitemap.xml is a ready-made list of every URL on
+  the site, which defeats the purpose here, so the plugin was dropped
+  entirely rather than just blocked in robots.txt
+
+**What this does and doesn't stop:** all of the above are opt-in signals —
+well-behaved crawlers (Google, Bing, and most AI crawlers that publish a
+bot identity, since they claim to respect `robots.txt`/`X-Robots-Tag`)
+will honor them and skip indexing. None of it stops a scraper that simply
+ignores those signals; there's no way to do that with static files alone.
+If that's needed, it has to happen at Cloudflare (since `gallowayhq.com`
+is proxied through Cloudflare Pages): Security → Bots → Bot Fight Mode /
+Super Bot Fight Mode to challenge or block known scraper traffic, or
+Cloudflare Access to put the whole site behind an auth wall. Both are
+dashboard-only settings, not something in this repo.
 
 ## Directory structure
 
