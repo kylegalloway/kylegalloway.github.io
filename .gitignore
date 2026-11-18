@@ -17,3 +17,6 @@ _site/
 .jekyll-metadata
 .bundle/
 vendor/
+
+# macOS Finder metadata
+.DS_Store
